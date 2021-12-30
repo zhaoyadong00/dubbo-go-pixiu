@@ -70,3 +70,11 @@ static_resources:
           group: DEFAULT_GROUP
           timeout: 3s
           address: 127.0.0.1:8848
+    - id: "springcloud-zk"
+        name: "dgp.adapter.springcloud"
+        config:
+          freshInterval: 60s
+          registry:
+            name: zookeeper
+            protocol: zookeeper
+            address: 127.0.0.1:2181
