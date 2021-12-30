@@ -3,6 +3,27 @@
 
 ## Development 
 
+### Start SpringCloud 
+
+> p.s. the SpringCloud Server name is `pixiu-springcloud-server` , setting with [application.yml](src/main/resources/application.yml)
+
+first, start Zookeeper use for Register Center, maybe you can use [docker-compose](docker-compose.yml)
+
+```shell
+services:
+  zookeeper:
+    image: zookeeper
+    ports:
+      - "2181:2181"
+```
+
+second, start the SpringCloud Server, use [start.sh](start.sh) or run with IDEA 
+
+```shell
+mvn spring-boot:run
+```
+
+finally, check Server
 ```shell
 curl http://localhost:9127/hi
 ```
@@ -10,8 +31,9 @@ result
 ```shell
 Hello Pixiu World! from org.springframework.cloud.zookeeper.serviceregistry.ServiceInstanceRegistration@63a45760
 ```
+or
 
-find service instance info:
+find service instance info on zookeeper:
 ```shell
 curl http://localhost:9127/service/pixiu-springcloud-server
 ```
@@ -77,5 +99,14 @@ result
 ```
 
 
+### Start Pixiu
 
+start Pixiu 
+```shell
+gateway start -c samples/springcloud/pixiu/conf.yaml
+```
 
+test Pixiu connect with SpringCloud base on Zookeeper
+```shell
+curl http://127.0.0.1:8888/pixiu-springcloud-server/hi
+```

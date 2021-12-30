@@ -41,8 +41,6 @@ import (
 const (
 	// Kind is the kind of Adapter Plugin.
 	Kind = constant.SpringCloudAdapter
-
-	LogPre = "Cloud"
 )
 
 func init() {
@@ -131,7 +129,7 @@ func (a *CloudAdapter) Apply() error {
 	case "nacos":
 		a.sd, err = nacos.NewNacosServiceDiscovery(a.cfg.Services, a.cfg.Registry, a)
 	case "zookeeper":
-		a.sd, err = zookeeper.GetServiceDiscovery(a.cfg, a)
+		a.sd, err = zookeeper.GetServiceDiscovery(a.cfg.Services, a.cfg.Registry, a)
 	default:
 		return errors.New("adapter init error registry not recognise")
 	}

@@ -16,3 +16,8 @@
  */
 
 package common
+
+
+const (
+	LogDiscovery = "[CloudDiscovery]"
+)
