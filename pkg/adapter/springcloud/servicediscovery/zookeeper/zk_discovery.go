@@ -7,6 +7,7 @@ import (
 	"github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery"
 	"github.com/apache/dubbo-go-pixiu/pkg/logger"
 	"github.com/apache/dubbo-go-pixiu/pkg/model"
+	zk2 "github.com/dubbogo/go-zookeeper/zk"
 	"path"
 )
 
@@ -66,8 +67,22 @@ func (sd *zookeeperDiscovery) UnRegister() error {
 }
 
 func (sd *zookeeperDiscovery) Subscribe() error {
-	//panic("implement me")
-	logger.Warnf("%s Subscribe implement me!!", common.LogDiscovery)
+	names := sd.listener.GetServiceNames()
+	logger.Infof("%s names %s" , common.LogDiscovery , names)
+	for _ , v := range names {
+		p := sd.pathForName(v)
+		ids , event , err := sd.client.GetChildrenW(p)
+		if err != nil {
+			logger.Warnf("%s Subscribe GetChildrenW err: %s" , common.LogDiscovery , err.Error())
+		}
+		instance , err := sd.queryForInstance(v , ids[0])
+		if err != nil {
+			logger.Warnf("%s Callback queryForInstance err: %s" , common.LogDiscovery , err.Error())
+			return err
+		}
+		go sd.Callback(instance , event)
+	}
+	//logger.Warnf("%s Subscribe implement me!!" , common.LogDiscovery)
 	return nil
 }
 
@@ -141,6 +156,26 @@ func GetServiceDiscovery(targetService []string, config *model.RemoteConfig, lis
 		listener: listener,
 		targetService: targetService,
 	}, err
+}
+
+
+func (sd *zookeeperDiscovery)Callback(instance *servicediscovery.ServiceInstance , event <-chan zk2.Event) {
+	logger.Info(common.LogDiscovery , " sd.client" , sd.client , "targetService:" , sd.targetService , "instanceMap:" , sd.instanceMap , "listener:" , sd.listener)
+	res := <- event
+	switch int(res.State) {
+	case (int)(zk2.EventNodeDataChanged):
+		sd.listener.OnUpdateServiceInstance(instance)
+	case (int)(zk2.EventNodeDeleted):
+		sd.listener.OnDeleteServiceInstance(instance)
+	case (int)(zk2.EventNodeCreated):
+		sd.listener.OnAddServiceInstance(instance)
+	case (int)(zk2.EventNodeChildrenChanged):
+		logger.Info(common.LogDiscovery , " Callback EventNodeChildrenChanged")
+	default :
+		logger.Info(common.LogDiscovery , " default")
+	}
+	logger.Info(common.LogDiscovery , " Callback:" , res)
+	return
 }
 
 type SpringCloudZKInstance struct {
