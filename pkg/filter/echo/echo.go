@@ -31,7 +31,7 @@ type (
 
 	// Config describe the config of FilterFactory
 	Config struct {
-		Str string `yaml:"str" json:"str" mapstructure:"str"`
+		Body string `yaml:"body" json:"body" mapstructure:"body"`
 	}
 )
 
@@ -50,7 +50,7 @@ func (f *FilterFactory)Config() interface{}  {
 }
 
 func (f *Filter) Decode(hc *http.HttpContext) filter.FilterStatus {
-	_ , err := hc.Writer.Write([]byte(f.cfg.Str))
+	_ , err := hc.Writer.Write([]byte(f.cfg.Body))
 	if err != nil {
 		logger.Errorf("[dubbo-go-pixiu] echo handle context write err:%v!", err)
 	}
