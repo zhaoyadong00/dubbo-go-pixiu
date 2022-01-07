@@ -41,6 +41,7 @@ const (
 	HTTPProxyRewriteFilter = "dgp.filter.http.proxyrewrite"
 	HTTPLoadBalanceFilter  = "dgp.filter.http.loadbalance"
 	HTTPEventFilter        = "dgp.filter.http.event"
+	HTTPEchoFilter		= "dgp.filter.http.echo"
 )
 
 const (
