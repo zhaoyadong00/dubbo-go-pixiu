@@ -26,6 +26,7 @@ import (
 	_ "github.com/apache/dubbo-go-pixiu/pkg/filter/cors"
 	_ "github.com/apache/dubbo-go-pixiu/pkg/filter/csrf"
 	_ "github.com/apache/dubbo-go-pixiu/pkg/filter/header"
+	_ "github.com/apache/dubbo-go-pixiu/pkg/filter/echo"
 	_ "github.com/apache/dubbo-go-pixiu/pkg/filter/host"
 	_ "github.com/apache/dubbo-go-pixiu/pkg/filter/http/apiconfig"
 	_ "github.com/apache/dubbo-go-pixiu/pkg/filter/http/grpcproxy"
