@@ -1,0 +1,14 @@
+server:
+  port: 9128
+spring:
+#  cloud:
+#    zookeeper:
+#      connect-string: localhost:2181
+  application:
+    name: pixiu-springcloud-server2
+
+logging.level:
+  org.apache.zookeeper.ClientCnxn: ERROR
+
+#spring.cloud.zookeeper.dependencies:
+#  - testZookeeperApp: ~
