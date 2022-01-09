@@ -22,9 +22,8 @@ type zookeeperDiscovery struct {
 }
 
 func (sd *zookeeperDiscovery) QueryAllServices() ([]servicediscovery.ServiceInstance, error) {
-	//panic("implement me")
 	serviceNames, err := sd.queryForNames()
-	logger.Infof("%s find services %v", common.LogDiscovery, serviceNames)
+	logger.Debugf("%s services %v", common.ZKLogDiscovery, serviceNames)
 	if err != nil {
 		return nil, err
 	}
@@ -37,11 +36,10 @@ func (sd *zookeeperDiscovery) QueryServicesByName(serviceNames []string) ([]serv
 
 	for _, s := range serviceNames {
 		ids, err := sd.client.GetChildren(sd.pathForName(s))
-		logger.Infof("%s find service vid %s of service name %s", common.LogDiscovery, ids, s)
+		logger.Debugf("%s service name %s, id %s", common.ZKLogDiscovery, s, ids)
 		if err != nil {
 			return nil, err
 		}
-		logger.Infof("%s find service instance %v ", common.LogDiscovery, ids)
 		for _, id := range ids {
 			var instance  *servicediscovery.ServiceInstance
 			instance, err = sd.queryForInstance(s, id)
@@ -54,41 +52,40 @@ func (sd *zookeeperDiscovery) QueryServicesByName(serviceNames []string) ([]serv
 	return instances, nil
 }
 
+// Register not now
 func (sd *zookeeperDiscovery) Register() error {
-	//panic("implement me")
-	logger.Warnf("%s Register implement me!!", common.LogDiscovery)
+	logger.Warnf("%s Register implement me!!", common.ZKLogDiscovery)
 	return nil
 }
 
+// UnRegister not now
 func (sd *zookeeperDiscovery) UnRegister() error {
-	//panic("implement me")
-	logger.Warnf("%s UnRegister implement me!!", common.LogDiscovery)
+	logger.Warnf("%s UnRegister implement me!!", common.ZKLogDiscovery)
 	return nil
 }
 
 func (sd *zookeeperDiscovery) Subscribe() error {
 	names := sd.listener.GetServiceNames()
-	logger.Infof("%s names %s" , common.LogDiscovery , names)
+	logger.Debugf("%s names %s" , common.ZKLogDiscovery , names)
 	for _ , v := range names {
 		p := sd.pathForName(v)
 		ids , event , err := sd.client.GetChildrenW(p)
 		if err != nil {
-			logger.Warnf("%s Subscribe GetChildrenW err: %s" , common.LogDiscovery , err.Error())
+			logger.Warnf("%s Subscribe GetChildrenW err: %s" , common.ZKLogDiscovery , err.Error())
 		}
 		instance , err := sd.queryForInstance(v , ids[0])
 		if err != nil {
-			logger.Warnf("%s Callback queryForInstance err: %s" , common.LogDiscovery , err.Error())
+			logger.Warnf("%s Callback queryForInstance err: %s" , common.ZKLogDiscovery , err.Error())
 			return err
 		}
 		go sd.Callback(instance , event)
 	}
-	//logger.Warnf("%s Subscribe implement me!!" , common.LogDiscovery)
 	return nil
 }
 
 func (sd *zookeeperDiscovery) Unsubscribe() error {
 	//panic("implement me")
-	logger.Warnf("%s Unsubscribe implement me!!", common.LogDiscovery)
+	logger.Warnf("%s Unsubscribe implement me!!", common.ZKLogDiscovery)
 	return nil
 }
 
@@ -160,7 +157,7 @@ func GetServiceDiscovery(targetService []string, config *model.RemoteConfig, lis
 
 
 func (sd *zookeeperDiscovery)Callback(instance *servicediscovery.ServiceInstance , event <-chan zk2.Event) {
-	logger.Info(common.LogDiscovery , " sd.client" , sd.client , "targetService:" , sd.targetService , "instanceMap:" , sd.instanceMap , "listener:" , sd.listener)
+	logger.Info(common.ZKLogDiscovery , " sd.client" , sd.client , "targetService:" , sd.targetService , "instanceMap:" , sd.instanceMap , "listener:" , sd.listener)
 	res := <- event
 	switch int(res.State) {
 	case (int)(zk2.EventNodeDataChanged):
@@ -170,11 +167,11 @@ func (sd *zookeeperDiscovery)Callback(instance *servicediscovery.ServiceInstance
 	case (int)(zk2.EventNodeCreated):
 		sd.listener.OnAddServiceInstance(instance)
 	case (int)(zk2.EventNodeChildrenChanged):
-		logger.Info(common.LogDiscovery , " Callback EventNodeChildrenChanged")
+		logger.Info(common.ZKLogDiscovery , " Callback EventNodeChildrenChanged")
 	default :
-		logger.Info(common.LogDiscovery , " default")
+		logger.Info(common.ZKLogDiscovery , " default")
 	}
-	logger.Info(common.LogDiscovery , " Callback:" , res)
+	logger.Info(common.ZKLogDiscovery , " Callback:" , res)
 	return
 }
 

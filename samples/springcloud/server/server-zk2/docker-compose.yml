@@ -1,8 +1,0 @@
-version: '3.1'
-services:
-  zk1:
-    image: zookeeper
-    restart: always
-    container_name: zk1
-    ports:
-      - "127.0.0.1:2181:2181"

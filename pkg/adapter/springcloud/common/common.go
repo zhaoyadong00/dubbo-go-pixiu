@@ -19,5 +19,6 @@ package common
 
 
 const (
-	LogDiscovery = "[CloudDiscovery]"
+	LogDiscovery = "[Discover]"
+	ZKLogDiscovery = "[ZK-Discover]"
 )

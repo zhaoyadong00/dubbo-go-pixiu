@@ -35,7 +35,8 @@ static_resources:
               config:
                 route_config:
                   dynamic: true
-                  dynamic_apdter: "springcloud"
+#                  dynamic_apdter: "springcloud"
+                  dynamic_apdter: "springcloud-zk"
                   routes:
                 http_filters:
                   - name: dgp.filter.http.proxyrewrite
@@ -70,3 +71,12 @@ static_resources:
           group: DEFAULT_GROUP
           timeout: 3s
           address: 127.0.0.1:8848
+    - id: "springcloud-zk"
+      name: "dgp.adapter.springcloud"
+      config:
+        freshInterval: 60s
+        registry:
+          name: zookeeper
+          protocol: zookeeper
+          address: 127.0.0.1:2181
+          timeout: 1000s
