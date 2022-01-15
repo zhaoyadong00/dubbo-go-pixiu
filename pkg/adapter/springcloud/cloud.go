@@ -18,6 +18,7 @@
 package springcloud
 
 import (
+	"github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery/zookeeper"
 	"strings"
 	"sync"
 	"time"
@@ -30,7 +31,6 @@ import (
 import (
 	"github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery"
 	"github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery/nacos"
-	"github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery/zookeeper"
 	"github.com/apache/dubbo-go-pixiu/pkg/common/constant"
 	"github.com/apache/dubbo-go-pixiu/pkg/common/extension/adapter"
 	"github.com/apache/dubbo-go-pixiu/pkg/logger"
@@ -67,7 +67,7 @@ type (
 		// Mode default 0 start backgroup fresh and watch, 1 only fresh 2 only watch
 		Mode          int                 `yaml:"mode" json:"mode" default:"mode"`
 		Registry      *model.RemoteConfig `yaml:"registry" json:"registry" default:"registry"`
-		FreshInterval time.Duration       `yaml:"freshInterval" json:"freshInterval" default:"freshInterval"`
+		FreshInterval time.Duration       `yaml:"freshInterval" json:"freshInterval" default:"0s"`
 		Services      []string            `yaml:"services" json:"services" default:"services"`
 	}
 
@@ -92,22 +92,22 @@ func (a *CloudAdapter) Start() {
 	// init get all service instance
 	err := a.firstFetch()
 	if err != nil {
-		logger.Errorf("init fetch service fail", err.Error())
-		return
+		logger.Warnf("init fetch service fail", err.Error())
+		//return
 	}
 
 	// background sync service instance from remote
 	err = a.backgroundSyncPeriod()
 	if err != nil {
-		logger.Errorf("init periodicity fetch service task fail", err.Error())
-		return
+		logger.Warnf("init periodicity fetch service task fail", err.Error())
+		//return
 	}
 
 	// watch then fetch is more safety for consistent but there is background fresh mechanism
 	err = a.watch()
 	if err != nil {
-		logger.Errorf("init watch the register fail", err.Error())
-		return
+		logger.Warnf("init watch the register fail", err.Error())
+		//return
 	}
 }
 
@@ -129,7 +129,7 @@ func (a *CloudAdapter) Apply() error {
 	case "nacos":
 		a.sd, err = nacos.NewNacosServiceDiscovery(a.cfg.Services, a.cfg.Registry, a)
 	case "zookeeper":
-		a.sd, err = zookeeper.GetServiceDiscovery(a.cfg.Services, a.cfg.Registry, a)
+		a.sd, err = zookeeper.NewZKServiceDiscovery(a.cfg.Services, a.cfg.Registry, a)
 	default:
 		return errors.New("adapter init error registry not recognise")
 	}
@@ -306,6 +306,9 @@ func (a *CloudAdapter) fetchCompareAndSet() {
 }
 
 func (a *CloudAdapter) backgroundSyncPeriod() error {
+	if a.cfg.FreshInterval <= 0 {
+		return nil
+	}
 	timer := time.NewTicker(a.cfg.FreshInterval)
 	go func() {
 		defer timer.Stop()

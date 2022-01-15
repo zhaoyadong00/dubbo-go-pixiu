@@ -58,25 +58,22 @@ static_resources:
     step_timeout: "10s"
     reject_policy: "immediacy"
   adapters:
-    - id: "springcloud"
-      name: "dgp.adapter.springcloud"
-      config:
-        freshInterval: 60s # 刷新配置时间
-#        services:
-#          - user-service
-#          - auth-service
-        registry:
-          name: naocs
-          protocol: nacos
-          group: DEFAULT_GROUP
-          timeout: 3s
-          address: 127.0.0.1:8848
+#    - id: "springcloud"
+#      name: "dgp.adapter.springcloud"
+#      config:
+#        freshInterval: 60s # 刷新配置时间
+#        registry:
+#          name: naocs
+#          protocol: nacos
+#          group: DEFAULT_GROUP
+#          timeout: 3s
+#          address: 127.0.0.1:8848
     - id: "springcloud-zk"
       name: "dgp.adapter.springcloud"
       config:
-        freshInterval: 60s
+#        freshInterval: 60s
         registry:
           name: zookeeper
           protocol: zookeeper
           address: 127.0.0.1:2181
-          timeout: 1000s
+          timeout: 100000000s

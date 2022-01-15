@@ -20,5 +20,5 @@ package common
 
 const (
 	LogDiscovery = "[Discover]"
-	ZKLogDiscovery = "[ZK-Discover]"
+	ZKLogDiscovery = "[ZKDiscover]"
 )
