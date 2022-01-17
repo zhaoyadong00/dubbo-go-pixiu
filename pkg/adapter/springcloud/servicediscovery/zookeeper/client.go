@@ -18,6 +18,7 @@
 package zookeeper
 
 import (
+	"github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/common"
 	"github.com/apache/dubbo-go-pixiu/pkg/common/constant"
 	"github.com/apache/dubbo-go-pixiu/pkg/model"
 	"strings"
@@ -299,6 +300,27 @@ func (z *ZooKeeperClient) GetContent(path string) ([]byte, error) {
 	return data, nil
 }
 
+// GetContent gets content by @path
+func (z *ZooKeeperClient) GetContentW(path string) ([]byte, *zk.Stat, *zk.Watcher, error) {
+	var (
+		data []byte
+	)//([]string, <-chan zk.Event, error)
+	conn := z.getConn()
+	if conn == nil {
+		return nil, nil, nil, errors.New("ZooKeeper client has no connection")
+	}
+	data, stat, watcher, err := conn.GetW(path)
+	//data, _, err := conn.GetW(path)
+	if err != nil {
+		if err == zk.ErrNoNode {
+			return nil, nil, nil, errors.Errorf("path{%s} does not exist", path)
+		}
+		logger.Errorf("zk.Data(path{%s}) = error(%v)", path, errors.WithStack(err))
+		return nil, nil, nil, errors.WithMessagef(err, "zk.Data(path:%s)", path)
+	}
+	return data, stat, watcher, nil;
+}
+
 func (z *ZooKeeperClient) GetConnState() zk.State {
 	conn := z.getConn()
 	if conn != nil {
@@ -325,3 +347,89 @@ func (z *ZooKeeperClient) Exists(path string) (bool, *zk.Stat, error) {
 	}
 	return conn.Exists(path)
 }
+
+
+type WatchKey struct {
+	path string
+}
+
+type WatchManager struct {
+
+	basePath string
+
+	client *ZooKeeperClient
+	wlock sync.Mutex
+	watchMap map[WatchKey]*PiWatch
+}
+
+func (wm *WatchManager) watchNodeDataChange(path string)  {
+
+	watch := wm.getWatch(path)
+	if watch != nil {
+		logger.Debugf("%s there is watch %s that watching event ing...", common.ZKLogDiscovery, path)
+		return
+	}
+}
+
+func (wm *WatchManager) tickerRunnable(path string, watch func(path string)) func() chan bool {
+
+	return func() chan bool {
+		ticker := time.NewTicker(5 * time.Second)
+		stopChan := make(chan bool)
+
+		go func(ticker *time.Ticker) {
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					watch(path)
+				case stop := <-stopChan:
+					if stop {
+						logger.Infof(" Stop the watch ticker for %s", path)
+						return
+					}
+				}
+			}
+		}(ticker)
+		return stopChan
+	}
+}
+
+func (wm *WatchManager) watchChildrenChanged(path string) func() error {
+
+	return func() error {
+		watch := wm.getWatch(path)
+		if watch != nil {
+			logger.Debugf("%s there is watch %s that watching event ing...", common.ZKLogDiscovery, path)
+			return nil
+		}
+		child, event, err := wm.getClient().GetChildrenW(path)
+		logger.Debugf("%s Get Children Watch child %s, event %v", common.ZKLogDiscovery, child, event)
+		if err != nil {
+			logger.Errorf("%s Get Children Watch fail %s ", common.ZKLogDiscovery, path)
+			return nil
+		}
+
+		// pi handle event
+		watch.handle(event, nil)
+
+		return nil
+	}
+}
+
+func (wm *WatchManager) getClient() *ZooKeeperClient {
+	return wm.client
+}
+
+func (wm *WatchManager) key(path string) WatchKey {
+	return WatchKey{path}
+}
+
+func (wm *WatchManager) getWatch(path string) *PiWatch {
+	return wm.watchMap[wm.key(path)]
+}
+
+func (wm *WatchManager) delWatch(path string) {
+	delete(wm.watchMap, wm.key(path))
+}
+

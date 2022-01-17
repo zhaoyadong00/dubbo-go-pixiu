@@ -38,6 +38,8 @@ type zookeeperDiscovery struct {
 	watchAppLock sync.Mutex
 	watchInstanceLock sync.Mutex
 
+	wmanager *WatchManager
+
 	exit            chan struct{}
 	wg              sync.WaitGroup
 }
@@ -70,6 +72,15 @@ func NewZKServiceDiscovery(targetService []string, config *model.RemoteConfig, l
 		serviceMap: make(map[string][]servicediscovery.ServiceInstance),
 		instanceMap: make(map[string]servicediscovery.ServiceInstance),
 		watchMap: make(map[string]string),
+
+
+		// watch manager
+		wmanager: &WatchManager{
+			basePath: "/services",
+			client:   client,
+			wlock:    sync.Mutex{},
+			watchMap: make(map[WatchKey]*PiWatch),
+		},
 	}, err
 }
 
@@ -482,4 +493,48 @@ type SpringCloudZKInstance struct {
 	} `json:"uriSpec"`
 }
 
+type WatchEventHandle interface {
+	handle(event <-chan zk.Event, callback func())
+}
 
+type PiWatchEventHandler struct {}
+
+func (p *PiWatchEventHandler) handle(event <-chan zk.Event, callback func()) {
+
+	zkEvent := <- event
+
+	switch zkEvent.Type {
+	case zk.EventNodeDataChanged:
+		break
+	case zk.EventNodeDeleted:
+		break
+	case zk.EventNodeCreated:
+		break
+	case zk.EventNodeChildrenChanged:
+		p.EventNodeChildrenChanged(event)
+		break
+	case zk.EventSession:
+		break
+	case zk.EventNotWatching:
+		break
+	default :
+		logger.Debugf(common.ZKLogDiscovery , " none handler on event %s ", zkEvent.Type.String())
+	}
+}
+
+func (p *PiWatchEventHandler) EventNodeChildrenChanged(event <-chan zk.Event) {
+	logger.Debugf("%s PiWatchEventHandler handle EventNodeChildrenChanged")
+}
+
+type PiWatch struct {
+	*PiWatchEventHandler
+
+	path string
+
+	client *ZooKeeperClient
+}
+
+// todo
+func (pw *PiWatch) EventNodeChildrenChanged(event <-chan zk.Event)  {
+	logger.Debugf("PiWatchEventHandler EventNodeChildrenChanged")
+}
