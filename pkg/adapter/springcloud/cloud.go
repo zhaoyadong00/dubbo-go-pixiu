@@ -18,7 +18,8 @@
 package springcloud
 
 import (
-	"github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery/zookeeper"
+	//"github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery/zookeeper"
+	zookeeper "github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery/zka"
 	"strings"
 	"sync"
 	"time"
@@ -129,6 +130,7 @@ func (a *CloudAdapter) Apply() error {
 	case "nacos":
 		a.sd, err = nacos.NewNacosServiceDiscovery(a.cfg.Services, a.cfg.Registry, a)
 	case "zookeeper":
+		//a.sd, err = zookeeper.NewZKServiceDiscovery(a.cfg.Services, a.cfg.Registry, a)
 		a.sd, err = zookeeper.NewZKServiceDiscovery(a.cfg.Services, a.cfg.Registry, a)
 	default:
 		return errors.New("adapter init error registry not recognise")

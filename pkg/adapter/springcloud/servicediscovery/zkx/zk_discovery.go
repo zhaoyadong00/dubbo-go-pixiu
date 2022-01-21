@@ -2,13 +2,16 @@ package zookeeper
 
 import (
 	"encoding/json"
-	"github.com/apache/dubbo-go-pixiu/pkg/adapter/dubboregistry/remoting/zookeeper"
 	"github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/common"
 	"github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery"
 	"github.com/apache/dubbo-go-pixiu/pkg/common/constant"
 	"github.com/apache/dubbo-go-pixiu/pkg/logger"
 	"github.com/apache/dubbo-go-pixiu/pkg/model"
+	"github.com/apache/dubbo-go-pixiu/pkg/remote/zookeeper"
 	"github.com/dubbogo/go-zookeeper/zk"
+	gxset "github.com/dubbogo/gost/container/set"
+	gxzookeeper "github.com/dubbogo/gost/database/kv/zk"
+	"github.com/pkg/errors"
 	"path"
 	"sort"
 	"strings"
@@ -23,8 +26,12 @@ const (
 	defaultTTL = 30 * time.Second
 )
 
+var (
+	ErrNilNode = errors.Errorf("node does not exist")
+)
+
 type zookeeperDiscovery struct {
-	client   *ZooKeeperClient
+	client   *gxzookeeper.ZookeeperClient
 	basePath string
 
 	targetService []string
@@ -37,10 +44,62 @@ type zookeeperDiscovery struct {
 	watchAppLock      sync.Mutex
 	watchInstanceLock sync.Mutex
 
-	wmanager *WatchManager
-
 	exit chan struct{}
-	wg   sync.WaitGroup
+
+	config *model.RemoteConfig
+
+	wg                  sync.WaitGroup
+	cltLock             sync.Mutex
+	listenLock          sync.Mutex
+	done                chan struct{}
+	rootPath            string
+	listenNames         []string
+	instanceListenerMap map[string]*gxset.HashSet
+
+	zklistener *zookeeper.ZkEventListener
+}
+
+func (sd *zookeeperDiscovery) ZkClient() *gxzookeeper.ZookeeperClient {
+	return sd.client
+}
+
+func (sd *zookeeperDiscovery) SetZkClient(client *gxzookeeper.ZookeeperClient) {
+	sd.client = client
+}
+
+func (sd *zookeeperDiscovery) ZkClientLock() *sync.Mutex {
+	return &sd.cltLock
+}
+
+func (sd *zookeeperDiscovery) WaitGroup() *sync.WaitGroup {
+	return &sd.wg
+}
+
+func (sd *zookeeperDiscovery) Done() chan struct{} {
+	return sd.done
+}
+
+func (sd *zookeeperDiscovery) RestartCallBack() bool {
+	//sd.csd.ReRegisterServices()
+	sd.listenLock.Lock()
+	defer sd.listenLock.Unlock()
+	//for _, name := range zksd.listenNames {
+	//	sd.csd.ListenServiceEvent(name, zksd)
+	//}
+	return true
+}
+
+func (sd *zookeeperDiscovery) GetConfig() *model.RemoteConfig {
+	return sd.config
+}
+
+func (sd *zookeeperDiscovery) validate() bool {
+	err := zookeeper.ValidateZookeeperClient(sd, "zookeeper")
+	if err != nil {
+		logger.Errorf("ValidateZookeeperClient fail!") // pi fail
+		return false
+	}
+	return true
 }
 
 func NewZKServiceDiscovery(targetService []string, config *model.RemoteConfig, listener servicediscovery.ServiceEventListener) (servicediscovery.ServiceDiscovery, error) {
@@ -50,14 +109,7 @@ func NewZKServiceDiscovery(targetService []string, config *model.RemoteConfig, l
 	if len(config.Timeout) == 0 {
 		config.Timeout = "3s"
 	}
-	client, err := NewZookeeperClient(
-		&model.Registry{
-			Protocol: config.Protocol,
-			Address:  config.Address,
-			Timeout:  config.Timeout,
-			Username: config.Username,
-			Password: config.Password,
-		})
+	client, err := zookeeper.NewZkClient(config)
 
 	if err != nil {
 		return nil, err
@@ -72,13 +124,8 @@ func NewZKServiceDiscovery(targetService []string, config *model.RemoteConfig, l
 		instanceMap:   make(map[string]servicediscovery.ServiceInstance),
 		watchMap:      make(map[string]string),
 
-		// watch manager
-		wmanager: &WatchManager{
-			basePath: "/services",
-			client:   client,
-			wlock:    sync.Mutex{},
-			watchMap: make(map[WatchKey]*PiWatch),
-		},
+		config:     config,
+		zklistener: zookeeper.NewZkEventListener(client),
 	}, err
 }
 
@@ -134,7 +181,6 @@ func (sd *zookeeperDiscovery) UnRegister() error {
 func (sd *zookeeperDiscovery) Subscribe() error {
 
 	//sd.watch()
-
 	sd.watchx()
 
 	return nil
@@ -142,6 +188,24 @@ func (sd *zookeeperDiscovery) Subscribe() error {
 
 func (sd *zookeeperDiscovery) watchx() {
 
+	zklistener := sd.zklistener
+
+	//go zklistener.ListenServiceEventV2(sd.config,  sd.basePath,nil)
+
+	go zklistener.ListenRootEventV0(sd.config, sd.basePath, nil)
+
+	//children, _ := sd.ZkClient().GetChildren(sd.basePath)
+	//
+	//for _, child := range children {
+	//	servicePath := path.Join(sd.basePath, child)
+	//	//go zklistener.ListenServiceEventV2(sd.config,  path.Join(sd.basePath, child),nil)
+	//
+	//	getChildren, _ := sd.ZkClient().GetChildren(servicePath)
+	//
+	//	for _, getChild := range getChildren {
+	//		go zklistener.ListenServiceNodeEvent(path.Join(servicePath, getChild),nil)
+	//	}
+	//}
 }
 
 // pi watch for application change events
@@ -172,7 +236,7 @@ func (sd *zookeeperDiscovery) watch() {
 				failTimes++
 				logger.Infof("Watching path : `%s` fail : ", zkPath, err)
 				// Exit the watch if root node is in error
-				if err == zookeeper.ErrNilNode {
+				if err == ErrNilNode {
 					logger.Errorf("Watching path : `%s` got errNilNode, so exit listen", zkPath)
 					//return
 				}
@@ -232,7 +296,7 @@ func (sd *zookeeperDiscovery) watch() {
 					if err != nil {
 						failTimes++
 						logger.Debugf("Watching path : `%s` fail : ", zkPath, err)
-						if err == zookeeper.ErrNilNode {
+						if err == ErrNilNode {
 							logger.Errorf("Watching path : `%s` got errNilNode, so exit listen", zkPath)
 							//return
 						}
@@ -287,7 +351,7 @@ func (sd *zookeeperDiscovery) ServiceEventNodeCallback(pZkPath string, children 
 	case zk.EventNodeCreated:
 		break
 	case zk.EventNodeChildrenChanged:
-		exists, _, err := sd.client.Exists(serviceInstancePath)
+		exists, _, err := sd.ZkClient().Conn.Exists(serviceInstancePath) // pi todo remove
 		if err != nil {
 			logger.Errorf("%s Callback Exists err: %s", common.ZKLogDiscovery, err.Error())
 			break
@@ -393,7 +457,8 @@ func (sd *zookeeperDiscovery) Unsubscribe() error {
 }
 
 func (sd *zookeeperDiscovery) queryForInstanceByPath(path string) (*servicediscovery.ServiceInstance, error) {
-	data, err := sd.client.GetContent(path)
+	//data, err := sd.ZkClient().GetContent(path)
+	data, _, err := sd.ZkClient().GetContent(path)
 	if err != nil {
 		return nil, err
 	}
@@ -414,7 +479,8 @@ func (sd *zookeeperDiscovery) queryForInstanceByPath(path string) (*servicedisco
 
 func (sd *zookeeperDiscovery) queryForInstance(name string, id string) (*servicediscovery.ServiceInstance, error) {
 	path := sd.pathForInstance(name, id)
-	data, err := sd.client.GetContent(path)
+	data, _, err := sd.ZkClient().GetContent(path)
+	//data, err := sd.ZkClient().GetContent(path)
 	if err != nil {
 		return nil, err
 	}
@@ -434,11 +500,13 @@ func (sd *zookeeperDiscovery) queryForInstance(name string, id string) (*service
 }
 
 func (sd *zookeeperDiscovery) queryByServiceName() ([]string, error) {
-	return sd.client.GetChildren(sd.basePath)
+	sd.validate()
+	return sd.ZkClient().GetChildren(sd.basePath)
 }
 
 func (sd *zookeeperDiscovery) queryForNames() ([]string, error) {
-	return sd.client.GetChildren(sd.basePath)
+	sd.validate()
+	return sd.ZkClient().GetChildren(sd.basePath)
 }
 
 func (sd *zookeeperDiscovery) pathForInstance(name, id string) string {
@@ -495,7 +563,7 @@ type SpringCloudZKInstance struct {
 }
 
 type TreeCacheListener interface {
-	childEvent(client *ZooKeeperClient, event <-chan zk.Event)
+	childEvent(client *gxzookeeper.ZookeeperClient, event <-chan zk.Event)
 }
 
 type TreeNode struct {
@@ -543,10 +611,13 @@ type PiWatch struct {
 
 	path string
 
-	client *ZooKeeperClient
+	client *gxzookeeper.ZookeeperClient
 }
 
 // todo
 func (pw *PiWatch) EventNodeChildrenChanged(event <-chan zk.Event) {
 	logger.Debugf("PiWatchEventHandler EventNodeChildrenChanged")
+}
+
+type PiDataListener struct {
 }
