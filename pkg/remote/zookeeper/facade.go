@@ -18,7 +18,6 @@
 package zookeeper
 
 import (
-	"dubbo.apache.org/dubbo-go/v3/remoting"
 	"github.com/apache/dubbo-go-pixiu/pkg/model"
 	"sync"
 	"time"
@@ -39,7 +38,6 @@ type ZkClientFacade interface {
 	WaitGroup() *sync.WaitGroup // for wait group control, zk client listener & zk client container
 	Done() chan struct{}        // for registry destroy
 	RestartCallBack() bool
-	//GetURL() *common.URL
 	GetConfig() *model.RemoteConfig
 }
 
@@ -57,49 +55,4 @@ func HandleClientRestart(r ZkClientFacade) {
 			return
 		}
 	}
-}
-
-type BaseZkClientFacade struct {
-	client     *gxzookeeper.ZookeeperClient
-	clientLock sync.Mutex
-	wg         sync.WaitGroup
-	done       chan struct{}
-	conf       *model.RemoteConfig
-}
-
-func (b *BaseZkClientFacade) ZkClient() *gxzookeeper.ZookeeperClient {
-	return b.client
-}
-
-func (b *BaseZkClientFacade) SetZkClient(client *gxzookeeper.ZookeeperClient) {
-	b.client = client
-}
-
-func (b *BaseZkClientFacade) ZkClientLock() *sync.Mutex {
-	return &b.clientLock
-}
-
-func (b *BaseZkClientFacade) WaitGroup() *sync.WaitGroup {
-	return &b.wg
-}
-
-func (b *BaseZkClientFacade) Done() chan struct{} {
-	return b.done
-}
-
-func (b *BaseZkClientFacade) RestartCallBack() bool {
-	//
-	return true
-}
-
-func (b *BaseZkClientFacade) GetConfig() *model.RemoteConfig {
-	return b.conf
-}
-
-type PiDataListener struct {
-}
-
-func (p PiDataListener) DataChange(eventType remoting.Event) bool {
-	logger.Debugf("data change eventType ", eventType)
-	return true
 }

@@ -17,12 +17,15 @@ func TestZkEventListener_ListenRootEventV0(t *testing.T) {
 		t.Errorf("error create client %v", err)
 	}
 
-	dataListener := new(PiDataListener)
-	listener := NewZkEventListener(client)
+	//appChangeListener := new(ZkAppChangeListener)
+	//appInstanceListener := new(ZkAppInstanceListener)
+	//dataListener := new(PiDataListener)
+	listener := NewZkEventListenerV2(client)
 
 	// pi watch application
-	listener.ListenRootEventV0(config, "/services", dataListener)
+	//listener.ListenRootEventV0(config, "/services", dataListener)
 	// pi watch service
+	listener.ListenRootEventV0(config, "/services", nil)
 
 	// pi watch service instance
 

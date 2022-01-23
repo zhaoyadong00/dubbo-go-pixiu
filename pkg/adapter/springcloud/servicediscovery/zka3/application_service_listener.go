@@ -38,7 +38,8 @@ var _ registry.Listener = new(applicationServiceListener)
 type applicationServiceListener struct {
 	urls            []interface{}
 	servicePath     string
-	client          *ZooKeeperClient
+
+	serviceName     string
 
 	exit chan struct{}
 	wg   sync.WaitGroup
@@ -48,12 +49,12 @@ type applicationServiceListener struct {
 
 // pi serviceName : /services/sc1
 // newApplicationServiceListener creates a new zk service listener
-func newApplicationServiceListener(path string, client *ZooKeeperClient, ds *zookeeperDiscovery) *applicationServiceListener {
+func newApplicationServiceListener(path string, serviceName string, ds *zookeeperDiscovery) *applicationServiceListener {
 	return &applicationServiceListener{
 		servicePath:     path, // pi serviceName : /services/sc1
-		client:          client,
 		exit:            make(chan struct{}),
 		ds:              ds,
+		serviceName: serviceName,
 	}
 }
 
@@ -66,20 +67,22 @@ func (asl *applicationServiceListener) WatchAndHandle() {
 	)
 	defer delayTimer.Stop()
 	for {
+		children, e, err := asl.ds.getClient().GetChildrenW(asl.servicePath)
 		// pi servicePath : /services/sc1
-		children, e, err := asl.client.GetChildrenW(asl.servicePath) // pi children : [10c59770-c3b3-496b-9845-3ee95fe8e62c, 10c59770-c3b3-496b-9845-3ee95fe8e62c, 10c59770-c3b3-496b-9845-3ee95fe8e62c]
+		//children, e, err := asl.client.GetChildrenW(asl.servicePath) // pi children : [10c59770-c3b3-496b-9845-3ee95fe8e62c, 10c59770-c3b3-496b-9845-3ee95fe8e62c, 10c59770-c3b3-496b-9845-3ee95fe8e62c]
 		// error handling
 		if err != nil {
 			failTimes++
 			logger.Infof("watching (path{%s}) = error{%v}", asl.servicePath, err)
-			// Exit the watch if root node is in error
+			if err == zookeeper.ErrNilChildren {
+				return
+			}
 			if err == zookeeper.ErrNilNode {
 				logger.Errorf("watching (path{%s}) got errNilNode,so exit listen", asl.servicePath)
 				return
 			}
 			if failTimes > MaxFailTimes {
-				logger.Errorf("Error happens on (path{%s}) exceed max fail times: %v,so exit listen",
-					asl.servicePath, MaxFailTimes)
+				logger.Errorf("Error happens on (path{%s}) exceed max fail times: %v,so exit listen", asl.servicePath, MaxFailTimes)
 				return
 			}
 			delayTimer.Reset(ConnDelay * time.Duration(failTimes))
@@ -102,7 +105,7 @@ func (asl *applicationServiceListener) waitEventAndHandlePeriod(children []strin
 	for {
 		select {
 		case <-ticker.C:
-			asl.handleEvent(children)
+			//asl.handleEvent(children)
 		case zkEvent := <-e:
 			logger.Warnf("get a zookeeper e{type:%s, server:%s, path:%s, state:%d-%s, err:%s}",
 				zkEvent.Type.String(), zkEvent.Server, zkEvent.Path, zkEvent.State, zookeeper.StateToString(zkEvent.State), zkEvent.Err)
@@ -119,27 +122,40 @@ func (asl *applicationServiceListener) waitEventAndHandlePeriod(children []strin
 }
 
 func (asl *applicationServiceListener) handleEvent(children []string) { // pi children : [10c59770-c3b3-496b-9845-3ee95fe8e62c, 10c59770-c3b3-496b-9845-3ee95fe8e62c, 10c59770-c3b3-496b-9845-3ee95fe8e62c]
+
+	fetchChildren, err := asl.ds.getClient().GetChildren(asl.servicePath)
 	// pi children : [/services/sc1, /services/sc2, /services/sc3]
-	fetchChildren, err := asl.client.GetChildren(asl.servicePath) // pi children : [10c59770-c3b3-496b-9845-3ee95fe8e62c, 10c59770-c3b3-496b-9845-3ee95fe8e62c, 10c59770-c3b3-496b-9845-3ee95fe8e62c]
+	//fetchChildren, err := asl.client.GetChildren(asl.servicePath) // pi children : [10c59770-c3b3-496b-9845-3ee95fe8e62c, 10c59770-c3b3-496b-9845-3ee95fe8e62c, 10c59770-c3b3-496b-9845-3ee95fe8e62c]
 	if err != nil {
 		logger.Warnf("Error when retrieving newChildren in path: %s, Error:%s", asl.servicePath, err.Error())
 		return
 	}
 	discovery := asl.ds
+	instanceMap := discovery.instanceMap
 	for _, id := range fetchChildren {
-		serviceInstance, err := discovery.queryForInstance(asl.servicePath, id)
+		serviceInstance, err := discovery.queryForInstance(asl.serviceName, id)
 		if err != nil {
-			logger.Errorf("fail a %v", err) // pi retry
+			if err == zk.ErrNoNode {
+				discovery.delServiceInstance(serviceInstance)
+			}
+			logger.Errorf("fail %v", err) // pi retry
 			continue
 		}
 
-		instance := discovery.instanceMap[serviceInstance.ID]
+		instance := instanceMap[id]
 		if instance != nil {
 			// pi update
-			discovery.listener.OnUpdateServiceInstance(instance)
+			//discovery.updateServiceInstance(serviceInstance)
+
 		} else {
 			// pi add
-			discovery.listener.OnAddServiceInstance(instance)
+			discovery.addServiceInstance(serviceInstance)
+		}
+	}
+
+	if delInstanceIds := Diff(children, fetchChildren); delInstanceIds != nil {
+		for _, id := range delInstanceIds {
+			discovery.delServiceInstance(instanceMap[id])
 		}
 	}
 

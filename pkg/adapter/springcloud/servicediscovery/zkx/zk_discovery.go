@@ -1,6 +1,7 @@
 package zookeeper
 
 import (
+	"dubbo.apache.org/dubbo-go/v3/remoting"
 	"encoding/json"
 	"github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/common"
 	"github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery"
@@ -56,7 +57,7 @@ type zookeeperDiscovery struct {
 	listenNames         []string
 	instanceListenerMap map[string]*gxset.HashSet
 
-	zklistener *zookeeper.ZkEventListener
+	zklistener *zookeeper.ZkEventListenerV2
 }
 
 func (sd *zookeeperDiscovery) ZkClient() *gxzookeeper.ZookeeperClient {
@@ -125,7 +126,7 @@ func NewZKServiceDiscovery(targetService []string, config *model.RemoteConfig, l
 		watchMap:      make(map[string]string),
 
 		config:     config,
-		zklistener: zookeeper.NewZkEventListener(client),
+		zklistener: zookeeper.NewZkEventListenerV2(client),
 	}, err
 }
 
@@ -192,7 +193,28 @@ func (sd *zookeeperDiscovery) watchx() {
 
 	//go zklistener.ListenServiceEventV2(sd.config,  sd.basePath,nil)
 
-	go zklistener.ListenRootEventV0(sd.config, sd.basePath, nil)
+	// init：1、应用服务变更事件监听
+	acl := &ApplicationNodeListener{}
+	zklistener.ListenRootEventV0(sd.config, sd.basePath, acl)
+
+
+	// init：2、服务实例变更事件监听
+	sil := &ServicesInstanceNodeListener{}
+	children, _ := sd.client.GetChildren(sd.basePath)
+	for _, child := range children {
+		join := path.Join(sd.basePath, child)
+		zklistener.ListenServiceEventV2(sd.config, join, sil)
+	}
+
+	// init: 3、服务实例信息变更事件监听
+	dcl := &ServicesInstanceDataListener{}
+	children1, _ := sd.client.GetChildren(sd.basePath)
+	for _, child := range children1 {
+		join := path.Join(sd.basePath, child)
+		zklistener.ListenServiceNodeEvent(join, dcl)
+	}
+
+
 
 	//children, _ := sd.ZkClient().GetChildren(sd.basePath)
 	//
@@ -562,62 +584,112 @@ type SpringCloudZKInstance struct {
 	} `json:"uriSpec"`
 }
 
-type TreeCacheListener interface {
-	childEvent(client *gxzookeeper.ZookeeperClient, event <-chan zk.Event)
+//type TreeCacheListener interface {
+//	childEvent(client *gxzookeeper.ZookeeperClient, event <-chan zk.Event)
+//}
+//
+//type TreeNode struct {
+//}
+//type ChildData struct {
+//	path string
+//	stat zk.State
+//}
+//
+//type WatchEventHandle interface {
+//	handle(event <-chan zk.Event, callback func())
+//}
+//
+//type PiWatchEventHandler struct{}
+//
+//func (p *PiWatchEventHandler) handle(event <-chan zk.Event, callback func()) {
+//
+//	zkEvent := <-event
+//
+//	switch zkEvent.Type {
+//	case zk.EventNodeDataChanged:
+//		break
+//	case zk.EventNodeDeleted:
+//		break
+//	case zk.EventNodeCreated:
+//		break
+//	case zk.EventNodeChildrenChanged:
+//		p.EventNodeChildrenChanged(event)
+//		break
+//	case zk.EventSession:
+//		break
+//	case zk.EventNotWatching:
+//		break
+//	default:
+//		logger.Debugf(common.ZKLogDiscovery, " none handler on event %s ", zkEvent.Type.String())
+//	}
+//}
+//
+//func (p *PiWatchEventHandler) EventNodeChildrenChanged(event <-chan zk.Event) {
+//	logger.Debugf("%s PiWatchEventHandler handle EventNodeChildrenChanged")
+//}
+//
+//type PiWatch struct {
+//	*PiWatchEventHandler
+//
+//	path string
+//
+//	client *gxzookeeper.ZookeeperClient
+//}
+//
+//// todo
+//func (pw *PiWatch) EventNodeChildrenChanged(event <-chan zk.Event) {
+//	logger.Debugf("PiWatchEventHandler EventNodeChildrenChanged")
+//}
+
+// pi 实例信息 变更事件监听处理
+type ServicesInstanceDataListener struct {
 }
 
-type TreeNode struct {
-}
-type ChildData struct {
-	path string
-	stat zk.State
+func (p *ServicesInstanceDataListener) DataChange(eventType remoting.Event) bool {
+	logger.Debugf("data change eventType ", eventType)
+	return true
 }
 
-type WatchEventHandle interface {
-	handle(event <-chan zk.Event, callback func())
+// pi 应用 节点变更事件监听处理
+type ApplicationNodeListener struct {
+	sd *zookeeperDiscovery
 }
 
-type PiWatchEventHandler struct{}
+func (p *ApplicationNodeListener) DataChange(eventType remoting.Event) bool {
+	logger.Debugf("ZkAppChangeListener change eventType ", eventType)
 
-func (p *PiWatchEventHandler) handle(event <-chan zk.Event, callback func()) {
-
-	zkEvent := <-event
-
-	switch zkEvent.Type {
-	case zk.EventNodeDataChanged:
-		break
-	case zk.EventNodeDeleted:
-		break
-	case zk.EventNodeCreated:
-		break
-	case zk.EventNodeChildrenChanged:
-		p.EventNodeChildrenChanged(event)
-		break
-	case zk.EventSession:
-		break
-	case zk.EventNotWatching:
-		break
-	default:
-		logger.Debugf(common.ZKLogDiscovery, " none handler on event %s ", zkEvent.Type.String())
+	zkp := eventType.Path
+	discovery := p.sd
+	_, err := discovery.client.GetChildren(zkp)
+	if err != nil {
+		return false
 	}
+
+	//for _, child := range children {
+	//	instance, err := discovery.queryForInstanceByPath(path.Join(zkp, child))
+	//	if err != nil {
+	//		logger.Errorf("Error ", err)
+	//		continue
+	//	}
+	//
+	//}
+
+	switch eventType.Action {
+	case remoting.EventTypeAdd:
+	case remoting.EventTypeUpdate:
+	case remoting.EventTypeDel:
+	default:
+		logger.Warnf("Unknown event type %v", eventType)
+	}
+
+	return true
 }
 
-func (p *PiWatchEventHandler) EventNodeChildrenChanged(event <-chan zk.Event) {
-	logger.Debugf("%s PiWatchEventHandler handle EventNodeChildrenChanged")
+// pi 应用实例 节点变更事件监听处理
+type ServicesInstanceNodeListener struct {
 }
 
-type PiWatch struct {
-	*PiWatchEventHandler
-
-	path string
-
-	client *gxzookeeper.ZookeeperClient
-}
-
-// todo
-func (pw *PiWatch) EventNodeChildrenChanged(event <-chan zk.Event) {
-	logger.Debugf("PiWatchEventHandler EventNodeChildrenChanged")
-}
-
-type PiDataListener struct {
+func (p *ServicesInstanceNodeListener) DataChange(eventType remoting.Event) bool {
+	logger.Debugf("ZkAppInstanceListener change eventType ", eventType)
+	return true
 }

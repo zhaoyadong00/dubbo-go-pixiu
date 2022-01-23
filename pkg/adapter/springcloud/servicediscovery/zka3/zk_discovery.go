@@ -7,13 +7,15 @@ import (
 	"github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery"
 	"github.com/apache/dubbo-go-pixiu/pkg/logger"
 	"github.com/apache/dubbo-go-pixiu/pkg/model"
-	"github.com/dubbogo/go-zookeeper/zk"
+	"github.com/apache/dubbo-go-pixiu/pkg/remote/zookeeper"
+	gxzookeeper "github.com/dubbogo/gost/database/kv/zk"
 	"path"
 	"sync"
 	"time"
 )
 
 const (
+	ZKRootPath = "/services"
 	MaxFailTimes = 2
 	ConnDelay    = 3 * time.Second
 	//defaultTTL       = 10 * time.Minute
@@ -21,25 +23,23 @@ const (
 )
 
 type zookeeperDiscovery struct {
-	client   *ZooKeeperClient
+	//client   *gxzookeeper.ZookeeperClient
 	basePath string
 
 	targetService []string
 	listener      servicediscovery.ServiceEventListener
 
-	serviceMap  map[string][]servicediscovery.ServiceInstance
+	instanceMapLock      sync.Mutex
 	instanceMap map[string]*servicediscovery.ServiceInstance
-	watchMap    map[string]string
 
-	watchAppLock      sync.Mutex
-	watchInstanceLock sync.Mutex
-
-	wmanager *WatchManager
-
-	exit chan struct{}
-	wg   sync.WaitGroup
+	//watchAppLock      sync.Mutex
+	//watchInstanceLock sync.Mutex
+	//
+	//exit chan struct{}
+	//wg   sync.WaitGroup
 
 	registryListener map[string]registry.Listener
+	clientFacade *BaseZkClientFacade
 }
 
 func NewZKServiceDiscovery(targetService []string, config *model.RemoteConfig, listener servicediscovery.ServiceEventListener) (servicediscovery.ServiceDiscovery, error) {
@@ -49,36 +49,29 @@ func NewZKServiceDiscovery(targetService []string, config *model.RemoteConfig, l
 	if len(config.Timeout) == 0 {
 		config.Timeout = "3s"
 	}
-	client, err := NewZookeeperClient(
-		&model.Registry{
-			Protocol: config.Protocol,
-			Address:  config.Address,
-			Timeout:  config.Timeout,
-			Username: config.Username,
-			Password: config.Password,
-		})
+
+	client, err := zookeeper.NewZkClient(config)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return &zookeeperDiscovery{
-		client:           client,
-		basePath:         "/services",
+	z := &zookeeperDiscovery{
+		basePath:         ZKRootPath,
 		listener:         listener,
 		targetService:    targetService,
-		serviceMap:       make(map[string][]servicediscovery.ServiceInstance),
 		instanceMap:      make(map[string]*servicediscovery.ServiceInstance),
-		watchMap:         make(map[string]string),
 		registryListener: map[string]registry.Listener{},
-		// watch manager
-		wmanager: &WatchManager{
-			basePath: "/services",
-			client:   client,
-			wlock:    sync.Mutex{},
-			watchMap: make(map[WatchPath]*PiWatchEventHandler),
+		clientFacade: &BaseZkClientFacade{
+			client:  client,
+			conf:       config,
+			clientLock: sync.Mutex{},
+			wg:         sync.WaitGroup{},
+			done:       make(chan struct{}),
 		},
-	}, err
+	}
+	go zookeeper.HandleClientRestart(z.clientFacade)
+	return z, err
 }
 
 func (sd *zookeeperDiscovery) QueryAllServices() ([]servicediscovery.ServiceInstance, error) {
@@ -97,7 +90,7 @@ func (sd *zookeeperDiscovery) QueryServicesByName(serviceNames []string) ([]serv
 
 		var instances []servicediscovery.ServiceInstance
 
-		ids, err := sd.client.GetChildren(sd.pathForName(s))
+		ids, err := sd.getClient().GetChildren(sd.pathForName(s))
 		logger.Debugf("%s get services %s, services instanceIds %s", common.ZKLogDiscovery, s, ids)
 		if err != nil {
 			return nil, err
@@ -112,10 +105,8 @@ func (sd *zookeeperDiscovery) QueryServicesByName(serviceNames []string) ([]serv
 			instances = append(instances, *instance)
 			instancesAll = append(instancesAll, *instance)
 		}
-		sd.serviceMap[s] = instances
 	}
 
-	// pi instance init
 	for _, instance := range instancesAll {
 		if sd.instanceMap[instance.ID] == nil {
 			sd.instanceMap[instance.ID] = &instance
@@ -137,17 +128,23 @@ func (sd *zookeeperDiscovery) UnRegister() error {
 	return nil
 }
 
+func (sd *zookeeperDiscovery) getClient() *gxzookeeper.ZookeeperClient {
+	if err := zookeeper.ValidateZookeeperClient(sd.clientFacade, "zka3"); err != nil {
+		logger.Errorf("ValidateZookeeperClient error %s", err)
+	}
+	return sd.clientFacade.ZkClient()
+}
+
 func (sd *zookeeperDiscovery) Subscribe() error {
 
-	appListener := newZkAppListener(sd.client, sd)
-	sd.registryListener[sd.basePath] = appListener
-	appListener.WatchAndHandle()
+	sd.registryListener[sd.basePath] = newZkAppListener(sd)
+	sd.registryListener[sd.basePath].WatchAndHandle()
 
 	return nil
 }
 
 func (sd *zookeeperDiscovery) Unsubscribe() error {
-	logger.Debugf("%s Unsubscribe implement me!!", common.ZKLogDiscovery)
+	logger.Debugf("%s Unsubscribe me!", common.ZKLogDiscovery)
 
 	for k, listener := range sd.registryListener {
 		logger.Infof("Unsubscribe listener %s", k)
@@ -159,7 +156,7 @@ func (sd *zookeeperDiscovery) Unsubscribe() error {
 
 func (sd *zookeeperDiscovery) queryForInstance(name string, id string) (*servicediscovery.ServiceInstance, error) {
 	path := sd.pathForInstance(name, id)
-	data, err := sd.client.GetContent(path)
+	data, _, err := sd.getClient().GetContent(path)
 	if err != nil {
 		return nil, err
 	}
@@ -178,12 +175,74 @@ func (sd *zookeeperDiscovery) queryForInstance(name string, id string) (*service
 	return instance, nil
 }
 
+func (sd *zookeeperDiscovery) getServiceMap() map[string][]*servicediscovery.ServiceInstance {
+
+	m := make(map[string][]*servicediscovery.ServiceInstance)
+
+	for _, instance := range sd.instanceMap {
+
+		if instances := m[instance.ServiceName]; instances == nil {
+			m[instance.ServiceName] = []*servicediscovery.ServiceInstance{}
+		}
+
+		m[instance.ServiceName] = append(m[instance.ServiceName], instance)
+	}
+
+	return m
+}
+
+func (sd *zookeeperDiscovery) delServiceInstance(instance *servicediscovery.ServiceInstance) (bool, error) {
+
+	if instance == nil {
+		return true, nil
+	}
+
+	defer sd.instanceMapLock.Unlock()
+	sd.instanceMapLock.Lock()
+	if sd.instanceMap[instance.ID] != nil {
+		sd.listener.OnDeleteServiceInstance(instance)
+		delete(sd.instanceMap, instance.ID)
+	}
+
+	return true, nil
+}
+
+func (sd *zookeeperDiscovery) updateServiceInstance(instance *servicediscovery.ServiceInstance) (bool, error) {
+	if instance == nil {
+		return true, nil
+	}
+
+	defer sd.instanceMapLock.Unlock()
+	sd.instanceMapLock.Lock()
+	if sd.instanceMap[instance.ID] != nil {
+		sd.listener.OnUpdateServiceInstance(instance)
+		sd.instanceMap[instance.ID] = instance
+	}
+
+	return true, nil
+}
+
+func (sd *zookeeperDiscovery) addServiceInstance(instance *servicediscovery.ServiceInstance) (bool, error) {
+	if instance == nil {
+		return true, nil
+	}
+
+	defer sd.instanceMapLock.Unlock()
+	sd.instanceMapLock.Lock()
+	if sd.instanceMap[instance.ID] == nil {
+		sd.listener.OnAddServiceInstance(instance)
+		sd.instanceMap[instance.ID] = instance
+	}
+
+	return true, nil
+}
+
 func (sd *zookeeperDiscovery) queryByServiceName() ([]string, error) {
-	return sd.client.GetChildren(sd.basePath)
+	return sd.getClient().GetChildren(sd.basePath)
 }
 
 func (sd *zookeeperDiscovery) queryForNames() ([]string, error) {
-	return sd.client.GetChildren(sd.basePath)
+	return sd.getClient().GetChildren(sd.basePath)
 }
 
 func (sd *zookeeperDiscovery) pathForInstance(name, id string) string {
@@ -192,6 +251,14 @@ func (sd *zookeeperDiscovery) pathForInstance(name, id string) string {
 
 func (sd *zookeeperDiscovery) pathForName(name string) string {
 	return path.Join(sd.basePath, name)
+}
+
+type ZkServiceInstance struct {
+	servicediscovery.ServiceInstance
+}
+
+func (i *ZkServiceInstance) GetUniqKey() string {
+	return i.ID
 }
 
 type SpringCloudZKInstance struct {
@@ -218,82 +285,39 @@ type SpringCloudZKInstance struct {
 	} `json:"uriSpec"`
 }
 
-//type WatchEventHandle interface {
-//	Handle(event <-chan zk.Event)
-//}
-type PiWatchEventHandler struct{
-	//EventNodeDataChanged func (event zk.Event)
+type BaseZkClientFacade struct {
+	client     *gxzookeeper.ZookeeperClient
+	clientLock sync.Mutex
+	wg         sync.WaitGroup
+	done       chan struct{}
+	conf       *model.RemoteConfig
 }
 
-func (p *PiWatchEventHandler) Handle(event <-chan zk.Event) {
-
-	zkEvent := <-event
-
-	switch zkEvent.Type {
-	case zk.EventNodeDataChanged:
-		p.EventNodeDataChanged(zkEvent)
-	case zk.EventNodeDeleted:
-		p.EventNodeDeleted(zkEvent)
-	case zk.EventNodeCreated:
-		p.EventNodeCreated(zkEvent)
-	case zk.EventNodeChildrenChanged:
-		p.EventNodeChildrenChanged(zkEvent)
-	case zk.EventSession:
-		p.EventSession(zkEvent)
-	case zk.EventNotWatching:
-		p.EventNotWatching(zkEvent)
-	default:
-		logger.Debugf(common.ZKLogDiscovery, " none handler on event %s ", zkEvent.Type.String())
-	}
-}
-func (p *PiWatchEventHandler) EventNodeDataChanged(event zk.Event) {
-
-}
-func (p *PiWatchEventHandler) EventNodeDeleted(event zk.Event) {
-
-}
-func (p *PiWatchEventHandler) EventNodeCreated(event zk.Event) {
-
-}
-func (p *PiWatchEventHandler) EventNodeChildrenChanged(event zk.Event) {
-
-}
-func (p *PiWatchEventHandler) EventNotWatching(event zk.Event) {
-
-}
-func (p *PiWatchEventHandler) EventSession(event zk.Event) {
-
+func (b *BaseZkClientFacade) ZkClient() *gxzookeeper.ZookeeperClient {
+	return b.client
 }
 
-// pi Application watch, e.p.: watch path "/services" childEvent
-type AppWatchHandler struct {
-	PiWatchEventHandler
-	sd *zookeeperDiscovery
+func (b *BaseZkClientFacade) SetZkClient(client *gxzookeeper.ZookeeperClient) {
+	b.client = client
 }
 
-// Application add or delete
-func (p *AppWatchHandler) EventNodeChildrenChanged(event zk.Event) {
-	// pi watch service add or delete
+func (b *BaseZkClientFacade) ZkClientLock() *sync.Mutex {
+	return &b.clientLock
 }
 
-// pi Application watch, e.p.: watch path "/services/sc1" childEvent
-type ServiceWatchHandler struct {
-	PiWatchEventHandler
-	sd *zookeeperDiscovery
+func (b *BaseZkClientFacade) WaitGroup() *sync.WaitGroup {
+	return &b.wg
 }
 
-// Service instance add or delete
-func (p *ServiceWatchHandler) EventNodeChildrenChanged(event zk.Event) {
-	// pi watch service instance add or delete
+func (b *BaseZkClientFacade) Done() chan struct{} {
+	return b.done
 }
 
-// pi Application watch, e.p.: watch path "/services/sc1/10c59770-c3b3-496b-9845-3ee95fe8e62c" dataEvent
-type ServiceInstanceWatchHandler struct {
-	PiWatchEventHandler
-	sd *zookeeperDiscovery
+func (b *BaseZkClientFacade) RestartCallBack() bool {
+	//
+	return true
 }
 
-// Service instance update
-func (p *ServiceInstanceWatchHandler) EventNodeDataChanged(event zk.Event) {
-	// pi watch service instance update
+func (b *BaseZkClientFacade) GetConfig() *model.RemoteConfig {
+	return b.conf
 }

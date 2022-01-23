@@ -53,7 +53,6 @@ var _ registry.Listener = new(zkAppListener)
 type zkAppListener struct {
 	servicesPath string
 	exit         chan struct{}
-	client       *ZooKeeperClient
 	svcListeners    *SvcListeners
 	wg              sync.WaitGroup
 
@@ -61,18 +60,21 @@ type zkAppListener struct {
 }
 
 // newZkAppListener returns a new newZkAppListener with pre-defined servicesPath according to the registered type.
-func newZkAppListener(client *ZooKeeperClient, ds *zookeeperDiscovery) registry.Listener {
+func newZkAppListener(ds *zookeeperDiscovery) registry.Listener {
 	p := defaultServicesPath
 	return &zkAppListener{
 		servicesPath:    p,
 		exit:            make(chan struct{}),
-		client:          client,
 		svcListeners:    &SvcListeners{listeners: make(map[string]registry.Listener), listenerLock: sync.Mutex{}},
 		ds:              ds,
 	}
 }
 
 func (z *zkAppListener) Close() {
+	for k, listener := range z.svcListeners.GetAllListener() {
+		z.svcListeners.RemoveListener(k)
+		listener.Close()
+	}
 	close(z.exit)
 	z.wg.Wait()
 }
@@ -92,7 +94,8 @@ func (z *zkAppListener) watch() {
 	defer delayTimer.Stop()
 	for {
 		// pi servicesPath : "/services"
-		children, e, err := z.client.GetChildrenW(z.servicesPath) // pi children : [sc1, sc2, sc3]
+		//children, e, err := z.client.GetChildrenW(z.servicesPath) // pi children : [sc1, sc2, sc3]
+		children, e, err := z.ds.getClient().GetChildrenW(z.servicesPath) // pi children : [sc1, sc2, sc3]
 		// error handling
 		if err != nil {
 			failTimes++
@@ -126,9 +129,9 @@ func (z *zkAppListener) waitEventAndHandlePeriod(children []string, e <-chan zk.
 	for {
 		select {
 		case <-ticker.C:
-			z.handleEvent(children)
+			//z.handleEvent(children)
 		case zkEvent := <-e:
-			logger.Warnf("get a zookeeper e{type:%s, server:%s, path:%s, state:%d-%s, err:%s}",
+			logger.Debugf("get a zookeeper e{type:%s, server:%s, path:%s, state:%d-%s, err:%s}",
 				zkEvent.Type.String(), zkEvent.Server, zkEvent.Path, zkEvent.State, zookeeper.StateToString(zkEvent.State), zkEvent.Err)
 			if zkEvent.Type != zk.EventNodeChildrenChanged {
 				return true
@@ -143,41 +146,41 @@ func (z *zkAppListener) waitEventAndHandlePeriod(children []string, e <-chan zk.
 }
 
 func (z *zkAppListener) handleEvent(children []string) {
-	fetchChildren, err := z.client.GetChildren(z.servicesPath) // pi fetchChildren : [sc1, sc2, sc3]
+	fetchChildren, err := z.ds.getClient().GetChildren(z.servicesPath)
+	//fetchChildren, err := z.client.GetChildren(z.servicesPath) // pi fetchChildren : [sc1, sc2, sc3]
 	if err != nil {
 		logger.Warnf("Error when retrieving newChildren in path: %s, Error:%s", z.servicesPath, err.Error())
 	}
 
 	discovery := z.ds
 
-	go func() {
-		keys := Keys(discovery.serviceMap)
+	del := func() {
+		keys := Keys(discovery.getServiceMap())
 		diff := Diff(keys, fetchChildren)
-		// pi del
 		if diff != nil {
 			logger.Debugf("Del the service %s", diff)
 			for _, sn := range diff {
-				for _, instance := range discovery.serviceMap[sn] {
-					// del
-					discovery.listener.OnDeleteServiceInstance(&instance)
+				for _, instance := range discovery.getServiceMap()[sn] {
+					// pi del
+					discovery.delServiceInstance(instance)
 				}
 			}
 		}
-	}()
+	};del()
 
-	for _, path := range fetchChildren { // pi fetchChildren : [sc1, sc2, sc3]
-		serviceName := strings.Join([]string{z.servicesPath, path}, constant.PathSlash) // pi serviceName : /services/sc1
-		if z.svcListeners.GetListener(serviceName) != nil {
+	for _, serviceName := range fetchChildren { // pi fetchChildren : [sc1, sc2, sc3]
+		serviceNodePath := strings.Join([]string{z.servicesPath, serviceName}, constant.PathSlash) // pi serviceName : /services/sc1
+		if z.svcListeners.GetListener(serviceNodePath) != nil {
 			continue
 		}
-		l := newApplicationServiceListener(serviceName, z.client, discovery) // pi serviceName : /services/sc1
+		l := newApplicationServiceListener(serviceNodePath, serviceName, discovery) // pi serviceName : /services/sc1
 		l.wg.Add(1)
 		go l.WatchAndHandle()
-		z.svcListeners.SetListener(serviceName, l)
+		z.svcListeners.SetListener(serviceNodePath, l)
 	}
 }
 
-func Keys(m map[string][]servicediscovery.ServiceInstance) []string {
+func Keys(m map[string][]*servicediscovery.ServiceInstance) []string {
 	j := 0
 	keys := make([]string, len(m))
 	for k := range m {

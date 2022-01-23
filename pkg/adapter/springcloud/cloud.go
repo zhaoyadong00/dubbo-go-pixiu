@@ -19,7 +19,10 @@ package springcloud
 
 import (
 	//"github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery/zookeeper"
-	zookeeper "github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery/zka"
+	//zookeeper "github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery/zka"
+	//zookeeper "github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery/zkx"
+	//zookeeper "github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery/zka2"
+	zookeeper "github.com/apache/dubbo-go-pixiu/pkg/adapter/springcloud/servicediscovery/zka3"
 	"strings"
 	"sync"
 	"time"
